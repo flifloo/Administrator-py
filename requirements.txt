@@ -1,6 +1,6 @@
-aiohttp==3.6.3
+aiohttp==3.6.2
 async-timeout==3.0.1
-attrs==20.2.0
+attrs==19.3.0
 chardet==3.0.4
 discord==1.0.1
 discord-py-slash-command==1.0.8.5
@@ -11,3 +11,6 @@ multidict==4.7.6
 sgmllib3k==1.0.0
 SQLAlchemy==1.3.20
 yarl==1.5.1
+websockets==8.1
+ics~=0.7
+requests~=2.23.0

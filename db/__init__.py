@@ -1,12 +1,8 @@
-from administrator.config import config
+from bot_bde.config import config
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-db = config.get("db")
-args = {"pool_pre_ping": True, "pool_recycle": 3600}
-if not db.startswith("sqlite:"):
-    args.update({"pool_size": 0, "max_overflow": -1})
-engine = create_engine(db, **args)
+engine = create_engine(config.get("db"))
 Session = sessionmaker(bind=engine)
 Base = declarative_base()
 from db.Task import Task
@@ -20,4 +16,5 @@ from db.InviteRole import InviteRole
 from db.Tomuss import Tomuss
 from db.PCP import PCP
 from db.Extension import Extension, ExtensionState
+from db.Calendar import Calendar
 Base.metadata.create_all(engine)

@@ -1,6 +1,7 @@
-from administrator import bot
+from bot_bde import bot
 
 bot.load_extension("extensions.help")
+bot.load_extension("extensions.speak")
 bot.load_extension("extensions.extension")
 bot.load_extension("extensions.purge")
 bot.load_extension("extensions.poll")
@@ -15,3 +16,4 @@ bot.load_extension("extensions.invite")
 bot.load_extension("extensions.speak")
 bot.load_extension("extensions.utils")
 bot.load_extension("extensions.tomuss")
+bot.load_extension("extensions.calendar")
