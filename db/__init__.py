@@ -16,5 +16,5 @@ from db.InviteRole import InviteRole
 from db.Tomuss import Tomuss
 from db.PCP import PCP
 from db.Extension import Extension, ExtensionState
-from db.Calendar import Calendar
+from db.Calendar import Calendar, CalendarNotify
 Base.metadata.create_all(engine)
