@@ -2,6 +2,7 @@ from discord import Embed
 from discord.ext import commands
 from discord.ext.commands import CommandNotFound, MissingRequiredArgument, BadArgument, MissingPermissions, \
     NoPrivateMessage, CommandError, NotOwner
+from discord_slash import SlashContext
 
 from administrator import config
 from administrator.check import ExtensionDisabled
@@ -38,19 +39,26 @@ class Help(commands.Cog):
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error):
+        await self.error_handler(ctx, error)
+
+    @commands.Cog.listener()
+    async def on_slash_command_error(self, ctx: SlashContext, error: Exception):
+        await self.error_handler(ctx, error)
+
+    @staticmethod
+    async def error_handler(ctx, error: Exception):
         if isinstance(error, CommandNotFound):
-            await ctx.message.add_reaction("\u2753")
+            await ctx.send(content="\u2753")
         elif isinstance(error, MissingRequiredArgument) or isinstance(error, BadArgument):
-            await ctx.message.add_reaction("\u274C")
-        elif isinstance(error, NotOwner) or isinstance(error, MissingPermissions)\
+            await ctx.send(content="\u274C")
+        elif isinstance(error, NotOwner) or isinstance(error, MissingPermissions) \
                 or isinstance(error, NoPrivateMessage):
-            await ctx.message.add_reaction("\U000026D4")
+            await ctx.send(content="\U000026D4")
         elif isinstance(error, ExtensionDisabled):
-            await ctx.message.add_reaction("\U0001F6AB")
+            await ctx.send(content="\U0001F6AB")
         else:
-            await ctx.send("An error occurred !")
+            await ctx.send(content="An error occurred !")
             raise error
-        await ctx.message.delete(delay=30)
 
 
 def setup(bot):

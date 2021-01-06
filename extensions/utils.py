@@ -1,9 +1,11 @@
 from datetime import datetime
 
-from discord import Embed, Member, Guild
+from discord import Embed, Guild
 from discord.ext import commands
-from discord.ext.commands import BadArgument, CommandError
+from discord_slash import cog_ext, SlashContext, SlashCommandOptionType
+from discord_slash.utils import manage_commands
 
+from administrator import slash
 from administrator.check import is_enabled
 from administrator.logger import logger
 
@@ -15,34 +17,17 @@ logger = logger.getChild(extension_name)
 class Utils(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        slash.get_cog_commands(self)
 
     def description(self):
         return "Some tools"
 
-    @commands.group("utils", pass_context=True)
-    @is_enabled()
-    async def utils(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.utils_help)
-
-    @utils.group("help", pass_context=True)
-    async def utils_help(self, ctx: commands.Context):
-        embed = Embed(title="Utils help")
-        try:
-            if await self.eval.can_run(ctx):
-                embed.add_field(name="eval \`\`\`code\`\`\`", value="Execute some code", inline=False)
-        except CommandError:
-            pass
-        embed.add_field(name="ping", value="Return the ping with the discord API", inline=False)
-        embed.add_field(name="info [@user]", value="Show information on guild or user specified", inline=False)
-        await ctx.send(embed=embed)
-
     @commands.group("eval", pass_context=True)
     @commands.is_owner()
     async def eval(self, ctx: commands.Context):
-        start = ctx.message.content.find("```")
-        end = ctx.message.content.find("```", start+3)
-        command = ctx.message.content[start+3:end]
+        start = ctx.message.content.find("```python")
+        end = ctx.message.content.find("```", start+9)
+        command = ctx.message.content[start+9:end]
         try:
             exec("async def __ex(self, ctx):\n" + command.replace("\n", "\n    "))
             out = str(await locals()["__ex"](self, ctx))
@@ -55,20 +40,20 @@ class Utils(commands.Cog):
         except Exception as e:
             await ctx.send(f"```{e.__class__.__name__}: {e}```")
 
-    @commands.group("ping", pass_context=True)
+    @cog_ext.cog_slash(name="ping", description="Return the ping with the discord API")
     @is_enabled()
-    async def ping(self, ctx: commands.Context):
+    async def ping(self, ctx: SlashContext):
         start = datetime.now()
-        msg = await ctx.send(f"Discord WebSocket latency: `{round(self.bot.latency*1000)}ms`")
-        await msg.edit(content=msg.content+"\n"+f"Bot latency: `{round((msg.created_at - start).microseconds/1000)}ms`")
+        content = f"Discord WebSocket latency: `{round(self.bot.latency*1000)}ms`"
+        await ctx.send(content=content)
+        await ctx.edit(content=content+"\n"+f"Bot latency: `{round((datetime.now() - start).microseconds/1000)}ms`")
 
-    @commands.group("info", pass_context=True)
+    @cog_ext.cog_slash(name="info",
+                       description="Show information on guild or user specified",
+                       options=[manage_commands.create_option("user", "A user", SlashCommandOptionType.USER, False)])
     @is_enabled()
-    async def info(self, ctx: commands.Context):
-        if len(ctx.message.mentions) > 1:
-            raise BadArgument()
-        elif ctx.message.mentions:
-            user: Member = ctx.message.mentions[0]
+    async def info(self, ctx: SlashContext, user: SlashCommandOptionType.USER = None):
+        if user:
             embed = Embed(title=str(user))
             embed.set_author(name="User infos", icon_url=user.avatar_url)
             embed.add_field(name="Display name", value=user.display_name)
@@ -129,11 +114,11 @@ class Utils(commands.Cog):
             embed.add_field(name="Shard ID", value=guild.shard_id)
             embed.add_field(name="Created at", value=guild.created_at)
 
-        await ctx.send(embed=embed)
+        await ctx.send(embeds=[embed])
 
-    @commands.group("about", pass_context=True)
+    @cog_ext.cog_slash(name="about", description="Show information about the bot")
     @is_enabled()
-    async def about(self, ctx: commands.Context):
+    async def about(self, ctx: SlashContext):
         embed = Embed(title=self.bot.user.display_name, description=self.bot.description)
         embed.set_author(name="Administrator", icon_url=self.bot.user.avatar_url, url="https://github.com/flifloo")
         flifloo = self.bot.get_user(177393521051959306)
@@ -142,9 +127,12 @@ class Utils(commands.Cog):
                         value=(await self.bot.application_info()).owner.display_name)
         embed.add_field(name="Guilds", value=str(len(self.bot.guilds)))
         embed.add_field(name="Extensions", value=str(len(self.bot.extensions)))
-        embed.add_field(name="Commands", value=str(len(self.bot.all_commands)))
+        embed.add_field(name="Commands", value=str(len(self.bot.all_commands)+len(slash.commands)))
         embed.add_field(name="Latency", value=f"{round(self.bot.latency*1000)} ms")
-        await ctx.send(embed=embed)
+        await ctx.send(embeds=[embed])
+
+    def cog_unload(self):
+        slash.remove_cog_commands(self)
 
 
 def setup(bot):
@@ -165,3 +153,6 @@ def teardown(bot):
         logger.error(f"Error unloading: {e}")
     else:
         logger.info(f"Unload successful")
+
+
+
