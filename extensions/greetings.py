@@ -1,16 +1,11 @@
 from discord.ext import commands
 from discord import Member, Embed, Forbidden
-from discord.ext.commands import BadArgument
+from discord_slash import cog_ext, SlashContext, SlashCommandOptionType
+from discord_slash.utils import manage_commands
 
-from administrator.check import is_enabled
 from administrator.logger import logger
-from administrator import db, config
+from administrator import db, slash
 from administrator.utils import event_is_enabled
-
-
-def check_greetings_message_type(message_type):
-    if message_type not in ["join", "leave"]:
-        raise BadArgument()
 
 
 extension_name = "greetings"
@@ -20,68 +15,77 @@ logger = logger.getChild(extension_name)
 class Greetings(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        slash.get_cog_commands(self)
 
     def description(self):
         return "Setup join and leave message"
 
-    @commands.group("greetings", pass_context=True)
-    @is_enabled()
-    @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
-    async def greetings(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.greetings_help)
-
-    @greetings.group("help", pass_context=True)
-    async def greetings_help(self, ctx: commands.Context):
+    @cog_ext.cog_subcommand(base="greetings", guild_ids=[693108780434587708], name="help",
+                            description="Help about greetings")
+    async def greetings_help(self, ctx: SlashContext):
         embed = Embed(title="Greetings help")
         embed.add_field(name="set <join/leave> <message>", value="Set the greetings message\n"
                                                                  "`{}` will be replace by the username",
                         inline=False)
         embed.add_field(name="show <join/leave>", value="Show the greetings message", inline=False)
         embed.add_field(name="toggle <join/leave>", value="Enable or disable the greetings message", inline=False)
-        await ctx.send(embed=embed)
+        await ctx.send(embeds=[embed])
 
-    @greetings.group("set", pass_context=True)
-    async def greetings_set(self, ctx: commands.Context, message_type: str):
-        check_greetings_message_type(message_type)
-        message = ctx.message.content.replace(config.get("prefix")+"greetings set " + message_type, "").strip()
+    @cog_ext.cog_subcommand(base="greetings", guild_ids=[693108780434587708], name="set",
+                            description="Set the greetings message\n`{}` will be replace by the username",
+                            options=[
+                                manage_commands.create_option("type", "The join or leave message",
+                                                              SlashCommandOptionType.STRING, True,
+                                                              [manage_commands.create_choice("join", "join"),
+                                                               manage_commands.create_choice("leave", "leave")]),
+                                manage_commands.create_option("message", "The message", SlashCommandOptionType.STRING,
+                                                              True)
+                            ])
+    async def greetings_set(self, ctx: SlashContext, message_type: str, message: str):
         s = db.Session()
         m = s.query(db.Greetings).filter(db.Greetings.guild == ctx.guild.id).first()
         if not m:
             m = db.Greetings(ctx.guild.id)
             s.add(m)
         setattr(m, message_type+"_enable", True)
-        setattr(m, message_type+"_message", message)
+        setattr(m, message_type+"_message", message.replace("\\n", '\n'))
         s.commit()
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
-    @greetings.group("show", pass_context=True)
-    async def greetings_show(self, ctx: commands.Context, message_type: str):
-        check_greetings_message_type(message_type)
+    @cog_ext.cog_subcommand(base="greetings", guild_ids=[693108780434587708], name="show",
+                            description="Show the greetings message",
+                            options=[manage_commands.create_option("type", "The join or leave message",
+                                                                   SlashCommandOptionType.STRING, True,
+                                                                   [manage_commands.create_choice("join", "join"),
+                                                                    manage_commands.create_choice("leave", "leave")])])
+    async def greetings_show(self, ctx: SlashContext, message_type: str):
         s = db.Session()
         m = s.query(db.Greetings).filter(db.Greetings.guild == ctx.guild.id).first()
         s.close()
         if not m:
-            await ctx.send(f"No {message_type} message set !")
+            await ctx.send(content=f"No {message_type} message set !")
         else:
             if message_type == "join":
-                await ctx.send(embed=m.join_embed(ctx.guild.name, str(ctx.message.author)))
+                await ctx.send(embeds=[m.join_embed(ctx.guild.name, str(ctx.author))])
             else:
-                await ctx.send(m.leave_msg(str(ctx.message.author)))
+                await ctx.send(content=m.leave_msg(str(ctx.author)))
 
-    @greetings.group("toggle", pass_context=True)
-    async def greetings_toggle(self, ctx: commands.Context, message_type: str):
-        check_greetings_message_type(message_type)
+    @cog_ext.cog_subcommand(base="greetings", guild_ids=[693108780434587708], name="toggle",
+                            description="Enable or disable the greetings message",
+                            options=[manage_commands.create_option("type", "The join or leave message",
+                                                                   SlashCommandOptionType.STRING, True,
+                                                                   [manage_commands.create_choice("join", "join"),
+                                                                    manage_commands.create_choice("leave", "leave")])])
+    async def greetings_toggle(self, ctx: SlashContext, message_type: str):
         s = db.Session()
         m = s.query(db.Greetings).filter(db.Greetings.guild == ctx.guild.id).first()
         if not m:
-            await ctx.send(f"No {message_type} message set !")
+            await ctx.send(content=f"No {message_type} message set !")
         else:
             setattr(m, message_type+"_enable", not getattr(m, message_type+"_enable"))
             s.commit()
-            await ctx.send(f"{message_type.title()} message is " +
-                           ("enable" if getattr(m, message_type+"_enable") else "disable"))
+            await ctx.send(content=f"{message_type.title()} message is " +
+                                   ("enable" if getattr(m, message_type+"_enable") else "disable"))
         s.close()
 
     @commands.Cog.listener()
@@ -107,6 +111,9 @@ class Greetings(commands.Cog):
         s.close()
         if m and m.leave_enable:
             await member.guild.system_channel.send(m.leave_msg(str(member)))
+
+    def cog_unload(self):
+        slash.remove_cog_commands(self)
 
 
 def setup(bot):
