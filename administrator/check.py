@@ -21,7 +21,8 @@ def is_enabled():
                 es = s.query(db.ExtensionState).get((args[0].qualified_name, ctx.guild.id))
                 s.close()
                 if es and not es.state:
-                    raise ExtensionDisabled()
+                    return
+                    # raise ExtensionDisabled()
                 return await func(*args)
         return wrapped
     return check
