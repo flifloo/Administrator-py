@@ -8,6 +8,7 @@ from discord_slash.utils import manage_commands
 
 import db
 from administrator import slash
+from administrator.check import has_permissions
 from administrator.logger import logger
 
 
@@ -24,7 +25,7 @@ class Extension(commands.Cog):
         return "Manage bot's extensions"
 
     @cog_ext.cog_subcommand(base="extension", name="list", description="List all enabled extensions")
-    @commands.has_guild_permissions(administrator=True)
+    @has_permissions(administrator=True)
     async def extension_list(self, ctx: SlashContext):
         s = db.Session()
         embed = Embed(title="Extensions list")
@@ -38,7 +39,7 @@ class Extension(commands.Cog):
                             description="Enable an extensions",
                             options=[manage_commands.create_option("extension", "The extension to enable",
                                                                    SlashCommandOptionType.STRING, True)])
-    @commands.has_guild_permissions(administrator=True)
+    @has_permissions(administrator=True)
     async def extension_enable(self, ctx: SlashContext, name: str):
         s = db.Session()
         es = s.query(db.ExtensionState).get((name, ctx.guild.id))
@@ -59,7 +60,7 @@ class Extension(commands.Cog):
                             description="Disable an extensions",
                             options=[manage_commands.create_option("extension", "The extension to disable",
                                                                    SlashCommandOptionType.STRING, True)])
-    @commands.has_guild_permissions(administrator=True)
+    @has_permissions(administrator=True)
     async def extension_disable(self, ctx: SlashContext, name: str):
         s = db.Session()
         es = s.query(db.ExtensionState).get((name, ctx.guild.id))

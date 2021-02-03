@@ -3,6 +3,7 @@ async-timeout==3.0.1
 attrs==20.2.0
 chardet==3.0.4
 discord==1.0.1
+discord-py-slash-command==1.0.8.5
 discord.py==1.5.1
 feedparser==6.0.2
 idna==2.10
