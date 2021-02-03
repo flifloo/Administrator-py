@@ -1,5 +1,4 @@
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from discord.ext import commands
 from discord import Embed
