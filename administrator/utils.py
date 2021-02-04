@@ -1,10 +1,30 @@
 import re
 from datetime import timedelta
 
+from discord import Message
 from discord.ext.commands import BadArgument
 from sqlalchemy.orm import Session
 
 import db
+
+
+msg_url_re = re.compile(r"^https://.*discord.*\.com/channels/[0-9]+/([0-9+]+)/([0-9]+)$")
+
+
+async def get_message_by_url(ctx, url: str) -> Message:
+    r = msg_url_re.fullmatch(url)
+    if not r:
+        raise BadArgument()
+    r = r.groups()
+
+    c = ctx.guild.get_channel(int(r[0]))
+    if not c:
+        raise BadArgument()
+
+    m = await c.fetch_message(int(r[1]))
+    if not m or m.is_system():
+        raise BadArgument()
+    return m
 
 
 def time_pars(s: str) -> timedelta:

@@ -10,13 +10,10 @@ import db
 from administrator import slash
 from administrator.check import guild_only, has_permissions
 from administrator.logger import logger
-
+from administrator.utils import get_message_by_url
 
 extension_name = "PCP"
 logger = logger.getChild(extension_name)
-msg_url_re = re.compile(r"^https://.*discord.*\.com/channels/[0-9]+/([0-9+]+)/([0-9]+)$")
-role_mention_re = re.compile(r"^<@&[0-9]+>$")
-user_mention_re = re.compile(r"^<@![0-9]+>$")
 
 
 class PCP(commands.Cog):
@@ -71,19 +68,7 @@ class PCP(commands.Cog):
 
     @staticmethod
     async def pin(ctx: SlashContext, url: str, action: bool):
-        r = msg_url_re.fullmatch(url)
-        if not r:
-            raise BadArgument()
-        r = r.groups()
-
-        c = ctx.guild.get_channel(int(r[0]))
-        if not c:
-            raise BadArgument()
-
-        m = await c.fetch_message(int(r[1]))
-        if not m or m.is_system():
-            raise BadArgument()
-
+        m = await get_message_by_url(ctx, url)
         if action:
             await m.pin()
             msg = "pinned a message"
