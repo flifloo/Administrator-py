@@ -1,12 +1,16 @@
 import re
 
-from discord import Embed, Member, Guild
+from discord import Embed, Member, Guild, Role, CategoryChannel
+from discord.abc import GuildChannel
 from discord.errors import Forbidden
 from discord.ext import commands
 from discord.ext.commands import BadArgument
+from discord_slash import cog_ext, SlashContext, SlashCommandOptionType
+from discord_slash.utils import manage_commands
 
 import db
-from administrator.check import is_enabled
+from administrator import slash
+from administrator.check import is_enabled, guild_only, has_permissions
 from administrator.logger import logger
 from administrator.utils import event_is_enabled
 
@@ -20,41 +24,31 @@ class Invite(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.invites = {}
+        slash.get_cog_commands(self)
         self.bot.loop.create_task(self.update_invites())
 
     def description(self):
         return "Get role from a special invite link"
 
-    @commands.group("invite", pass_context=True)
     @is_enabled()
-    @commands.guild_only()
-    @commands.has_guild_permissions(administrator=True)
-    async def invite(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.invite_help)
-
-    @invite.group("help", pass_context=True)
-    async def invite_help(self, ctx: commands.Context):
-        embed = Embed(title="Invite help")
-        embed.add_field(name="invite create <#channel> <@role>", value="Create a invite link to a role", inline=False)
-        embed.add_field(name="invite delete <code>", value="Remove a invite", inline=False)
-        await ctx.send(embed=embed)
-
-    @invite.group("create", pass_context=True)
-    async def invite_add(self, ctx: commands.Context, channel: str, role: str):
-        if not channel_mention_re.fullmatch(channel) or len(ctx.message.channel_mentions) != 1 or\
-                not role_mention_re.fullmatch(role) or len(ctx.message.role_mentions) != 1:
+    @guild_only()
+    @has_permissions(administrator=True)
+    async def invite_add(self, ctx: SlashContext, channel: GuildChannel, role: Role):
+        if isinstance(channel, CategoryChannel):
             raise BadArgument()
-
-        inv = await ctx.message.channel_mentions[0].create_invite()
+        inv = await channel.create_invite()
         s = db.Session()
-        s.add(db.InviteRole(ctx.guild.id, inv.code, ctx.message.role_mentions[0].id))
+        s.add(db.InviteRole(ctx.guild.id, inv.code, role.id))
         s.commit()
         s.close()
-        await ctx.send(f"Invite created: `{inv.url}`")
+        await ctx.send(content=f"Invite created: `{inv.url}`")
 
-    @invite.group("delete", pass_context=True)
-    async def invite_delete(self, ctx: commands.Context, code: str):
+    @cog_ext.cog_subcommand(base="invite", name="delete", description="Remove a invite", options=[
+        manage_commands.create_option("code", "The invitation code", SlashCommandOptionType.STRING, True)])
+    @is_enabled()
+    @guild_only()
+    @has_permissions(administrator=True)
+    async def invite_delete(self, ctx: SlashContext, code: str):
         inv = next(filter(lambda i: i.code == code, await ctx.guild.invites()), None)
         if not inv:
             raise BadArgument()
@@ -68,7 +62,7 @@ class Invite(commands.Cog):
         s.commit()
         s.close()
         await inv.delete()
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
     async def update_invites(self):
         for g in self.bot.guilds:

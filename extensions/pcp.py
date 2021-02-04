@@ -1,105 +1,74 @@
 import re
 
-from discord import Embed, Member
+from discord import Member, Role
 from discord.ext import commands
-from discord.ext.commands import BadArgument, MissingPermissions, CommandError
+from discord.ext.commands import BadArgument
+from discord_slash import cog_ext, SlashCommandOptionType, SlashContext
+from discord_slash.utils import manage_commands
 
 import db
+from administrator import slash
+from administrator.check import guild_only, has_permissions
 from administrator.logger import logger
-
+from administrator.utils import get_message_by_url
 
 extension_name = "PCP"
 logger = logger.getChild(extension_name)
-msg_url_re = re.compile(r"^https://.*discord.*\.com/channels/[0-9]+/([0-9+]+)/([0-9]+)$")
-role_mention_re = re.compile(r"^<@&[0-9]+>$")
-user_mention_re = re.compile(r"^<@![0-9]+>$")
 
 
 class PCP(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        slash.get_cog_commands(self)
 
     def description(self):
         return "PCP Univ Lyon 1"
 
-    @commands.group("pcp", pass_context=True)
-    @commands.guild_only()
-    async def pcp(self, ctx: commands.Context):
-        group = ctx.message.content.replace(f"{ctx.prefix}{ctx.command} ", "").upper()
-        if group:
-            s = db.Session()
-            p = s.query(db.PCP).get(ctx.guild.id)
-            s.close()
-            if p and re.fullmatch(p.roles_re, group):
-                await ctx.message.add_reaction("\U000023f3")
-                role = next(filter(lambda r: r.name.upper() == group, ctx.guild.roles), None)
-
-                def roles() -> list:
-                    return list(filter(
-                        lambda r: re.fullmatch(p.roles_re, r.name.upper()) or
-                        (p.start_role_re and re.fullmatch(p.start_role_re, r.name.upper())),
-                        ctx.author.roles
-                    ))
-
-                if not role or role.name in map(lambda r: r.name, roles()):
-                    await ctx.message.remove_reaction("\U000023f3", self.bot.user)
-                    raise BadArgument()
-
-                while roles():
-                    await ctx.author.remove_roles(*roles())
-
-                while role not in ctx.author.roles:
-                    await ctx.author.add_roles(role)
-                await ctx.message.remove_reaction("\U000023f3", self.bot.user)
-                await ctx.message.add_reaction("\U0001f44d")
-                return
-
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.pcp_help)
-
-    @pcp.group("help", pass_context=True)
-    async def pcp_help(self, ctx: commands.Context):
-        embed = Embed(title="PCP help")
+    @cog_ext.cog_subcommand(base="pcp", name="join", description="Join your group", options=[
+        manage_commands.create_option("group", "The target group to join", SlashCommandOptionType.ROLE, True)])
+    @guild_only()
+    async def pcp(self, ctx: SlashContext, role: Role):
         s = db.Session()
         p = s.query(db.PCP).get(ctx.guild.id)
         s.close()
-        if p:
-            embed.add_field(name="pcp <group>", value="Join your group", inline=False)
-        for c, n, v in [[self.pcp_group, "pcp group", "Manage PCP group"],
-                        [self.pcp_pin, "pcp pin <url>", "Pin a message with the url"],
-                        [self.pcp_unpin, "pcp unpin <url>", "Unpin a message with the url"]]:
-            try:
-                if await c.can_run(ctx):
-                    embed.add_field(name=n, value=v, inline=False)
-            except CommandError:
-                pass
-        if not embed.fields:
-            raise MissingPermissions("")
-        await ctx.send(embed=embed)
+        if p and re.fullmatch(p.roles_re, role.name.upper()):
+            await ctx.send(content="\U000023f3")
 
-    @pcp.group("pin", pass_context=True)
-    async def pcp_pin(self, ctx: commands.Context, url: str):
+            async def roles() -> list:
+                return list(filter(
+                    lambda r: re.fullmatch(p.roles_re, r.name.upper()) or
+                    (p.start_role_re and re.fullmatch(p.start_role_re, r.name.upper())),
+                    (await ctx.guild.fetch_member(ctx.author.id)).roles
+                ))
+
+            if not role or role.name in map(lambda r: r.name, await roles()):
+                await ctx.delete()
+                raise BadArgument()
+
+            while await roles():
+                await ctx.author.remove_roles(*(await roles()))
+
+            while role not in (await ctx.guild.fetch_member(ctx.author.id)).roles:
+                await ctx.author.add_roles(role)
+            await ctx.edit(content="\U0001f44d")
+
+    @cog_ext.cog_subcommand(base="pcp", name="pin", description="Pin a message with the url", options=[
+        manage_commands.create_option("url", "message URL", SlashCommandOptionType.STRING, True)
+    ])
+    @guild_only()
+    async def pcp_pin(self, ctx: SlashContext, url: str):
         await self.pin(ctx, url, True)
 
-    @pcp.group("unpin", pass_context=True)
-    async def pcp_unpin(self, ctx: commands.Context, url: str):
+    @cog_ext.cog_subcommand(base="pcp", name="unpin", description="Unpin a message with the url", options=[
+        manage_commands.create_option("url", "message URL", SlashCommandOptionType.STRING, True)
+    ])
+    @guild_only()
+    async def pcp_unpin(self, ctx: SlashContext, url: str):
         await self.pin(ctx, url, False)
 
     @staticmethod
-    async def pin(ctx: commands.Context, url: str, action: bool):
-        r = msg_url_re.fullmatch(url)
-        if not r:
-            raise BadArgument()
-        r = r.groups()
-
-        c = ctx.guild.get_channel(int(r[0]))
-        if not c:
-            raise BadArgument()
-
-        m = await c.fetch_message(int(r[1]))
-        if not m:
-            raise BadArgument()
-
+    async def pin(ctx: SlashContext, url: str, action: bool):
+        m = await get_message_by_url(ctx, url)
         if action:
             await m.pin()
             msg = "pinned a message"
@@ -107,35 +76,23 @@ class PCP(commands.Cog):
             await m.unpin()
             msg = "unpinned a message"
 
-        await ctx.send(f"{ctx.author.mention} {msg}")
+        await ctx.send(content=f"{ctx.author.mention} {msg}")
 
-    @pcp.group("group", pass_context=True)
-    @commands.has_permissions(administrator=True)
-    async def pcp_group(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.pcp_group_help)
-
-    @pcp_group.group("help", pass_context=True)
-    async def pcp_group_help(self, ctx: commands.Context):
-        embed = Embed(title="PCP group help")
-        embed.add_field(name="pcp group set <role Regex> [Welcome role Regex]",
-                        value="Set regex for group role", inline=False)
-        embed.add_field(name="pcp group unset", value="Unset regex for group role", inline=False)
-        embed.add_field(name="pcp group subject", value="Manage subjects for group", inline=False)
-        embed.add_field(name="pcp group fix_vocal",
-                        value="Check all text channel permissions to reapply vocal permissions", inline=False)
-        await ctx.send(embed=embed)
-
-    @pcp_group.group("fix_vocal", pass_context=True)
-    async def pcp_group_fix_vocal(self, ctx: commands.Context):
+    @cog_ext.cog_subcommand(base="pcp", subcommand_group="group", name="fix_vocal",
+                            description="Check all text channel permissions to reapply vocal permissions")
+    @has_permissions(administrator=True)
+    async def pcp_group_fix_vocal(self, ctx: SlashContext):
         s = db.Session()
         p = s.query(db.PCP).get(ctx.guild.id)
         s.close()
         if not p:
             raise BadArgument()
 
+        message = "\U000023f3"
+        await ctx.send(content=message)
         for cat in filter(lambda c: re.fullmatch(p.roles_re, c.name.upper()), ctx.guild.categories):
-            await ctx.send(f"{cat.name}...")
+            message += f"\n{cat.name}..."
+            await ctx.edit(content=message)
             teachers = []
             for t in cat.text_channels:
                 for p in t.overwrites:
@@ -144,11 +101,20 @@ class PCP(commands.Cog):
             voc = next(filter(lambda c: c.name == "vocal-1", cat.voice_channels), None)
             for t in teachers:
                 await voc.set_permissions(t, view_channel=True)
-            await ctx.send(f"{cat.name} done")
-        await ctx.message.add_reaction("\U0001f44d")
+            message += f"\n{cat.name} done"
+            await ctx.edit(content=message)
+        message += "\n\U0001f44d"
+        await ctx.edit(content=message)
 
-    @pcp_group.group("set", pass_context=True)
-    async def pcp_group_set(self, ctx: commands.Context, roles_re: str, start_role_re: str = None):
+    @cog_ext.cog_subcommand(base="pcp", subcommand_group="group", name="set", description="Set regex for group role",
+                            options=[
+                                manage_commands.create_option("role", "Roles regex",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("role2", "Start roles regex",
+                                                              SlashCommandOptionType.STRING, False)
+                            ])
+    @has_permissions(administrator=True)
+    async def pcp_group_set(self, ctx: SlashContext, roles_re: str, start_role_re: str = None):
         s = db.Session()
         p = s.query(db.PCP).get(ctx.guild.id)
         if p:
@@ -159,9 +125,11 @@ class PCP(commands.Cog):
         s.add(p)
         s.commit()
         s.close()
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
-    @pcp_group.group("unset", pass_context=True)
+    @cog_ext.cog_subcommand(base="pcp", subcommand_group="group", name="unset",
+                            description="Unset regex for group role")
+    @has_permissions(administrator=True)
     async def pcp_group_unset(self, ctx: commands.Context):
         s = db.Session()
         p = s.query(db.PCP).get(ctx.guild.id)
@@ -173,33 +141,21 @@ class PCP(commands.Cog):
         s.close()
         await ctx.message.add_reaction("\U0001f44d")
 
-    @pcp_group.group("subject", pass_context=True)
-    async def pcp_group_subject(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.pcp_group_subject_help)
-
-    @pcp_group_subject.group("help", pass_context=True)
-    async def pcp_group_subject_help(self, ctx: commands.Context):
-        embed = Embed(title="PCP group subject help")
-        embed.add_field(name="pcp group subject add <name> <@group> [@teacher]", value="Add a subject to a group",
-                        inline=False)
-        embed.add_field(name="pcp group subject bulk <@group> [subject1] [subject2] ...", value="Bulk subject add",
-                        inline=False)
-        embed.add_field(name="pcp group subject remove <name> <@group>", value="Remove a subject to a group",
-                        inline=False)
-        await ctx.send(embed=embed)
-
-    @pcp_group_subject.group("add", pass_context=True)
-    async def pcp_group_subject_add(self, ctx: commands.Context, name: str, group: str, teacher: str = None):
-        if not role_mention_re.fullmatch(group):
-            raise BadArgument()
-        if teacher and not user_mention_re.fullmatch(teacher):
-            raise BadArgument()
-        elif teacher and\
-                not next(filter(lambda r: r.name == "professeurs", ctx.message.mentions[0].roles), None):
+    @cog_ext.cog_subcommand(base="pcp", subcommand_group="subject", name="add", description="Add a subject to a group",
+                            options=[
+                                manage_commands.create_option("name", "The subject name",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("group", "The group",
+                                                              SlashCommandOptionType.ROLE, True),
+                                manage_commands.create_option("teacher", "The teacher",
+                                                              SlashCommandOptionType.USER, False)
+                            ])
+    @has_permissions(administrator=True)
+    async def pcp_group_subject_add(self, ctx: SlashContext, name: str, group: Role, teacher: Member = None):
+        if teacher and not next(filter(lambda r: r.name == "professeurs", teacher.roles), None):
             raise BadArgument()
 
-        cat = next(filter(lambda c: c.name.upper() == ctx.message.role_mentions[0].name.upper(),
+        cat = next(filter(lambda c: c.name.upper() == group.name.upper(),
                           ctx.guild.categories), None)
         if not cat:
             raise BadArgument()
@@ -210,26 +166,32 @@ class PCP(commands.Cog):
         voc = next(filter(lambda c: c.name == "vocal-1", cat.voice_channels), None)
         if not voc:
             voc = await cat.create_voice_channel("vocal-1")
-        if ctx.message.mentions:
-            await chan.set_permissions(ctx.message.mentions[0], read_messages=True)
-            await voc.set_permissions(ctx.message.mentions[0], view_channel=True)
+        if teacher:
+            await chan.set_permissions(teacher, read_messages=True)
+            await voc.set_permissions(teacher, view_channel=True)
 
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
-    @pcp_group_subject.group("bulk", pass_context=True)
-    async def pcp_group_subject_bulk(self, ctx: commands.Context, mention, *names):
-        if not role_mention_re.fullmatch(mention):
-            raise BadArgument()
-        for n in names:
-            await ctx.invoke(self.pcp_group_subject_add, n, mention)
+    @cog_ext.cog_subcommand(base="pcp", subcommand_group="subject", name="bulk",
+                            description="Remove a subject to a group", options=[
+            manage_commands.create_option("group", "The group", SlashCommandOptionType.ROLE, True),
+            manage_commands.create_option("names", "Subjects names", SlashCommandOptionType.STRING, True)
+        ])
+    @has_permissions(administrator=True)
+    async def pcp_group_subject_bulk(self, ctx: SlashContext, group: Role, names: str):
+        for n in names.split(" "):
+            await self.pcp_group_subject_add.invoke(ctx, n, group)
 
-    @pcp_group_subject.group("remove", pass_context=True)
-    async def pcp_group_subject_remove(self, ctx: commands.Context, name: str, group: str):
-        if not role_mention_re.fullmatch(group):
-            raise BadArgument()
-
-        cat = next(filter(lambda c: c.name.upper() == ctx.message.role_mentions[0].name.upper(),
-                          ctx.guild.categories), None)
+    @cog_ext.cog_subcommand(base="pcp", subcommand_group="subject", name="remove",description="Bulk subject add",
+                            options=[
+                                manage_commands.create_option("name", "The subject name",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("group", "The group",
+                                                              SlashCommandOptionType.ROLE, True)
+                            ])
+    @has_permissions(administrator=True)
+    async def pcp_group_subject_remove(self, ctx: SlashContext, name: str, group: Role):
+        cat = next(filter(lambda c: c.name.upper() == group.name.upper(), ctx.guild.categories), None)
         if not cat:
             raise BadArgument()
 
@@ -239,7 +201,7 @@ class PCP(commands.Cog):
 
         await chan.delete()
 
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
 
 def setup(bot):

@@ -1,84 +1,64 @@
-import re
-
 from discord.abc import GuildChannel
 from discord.ext import commands
 from discord import Embed, RawReactionActionEvent, RawBulkMessageDeleteEvent, RawMessageDeleteEvent, NotFound, \
-    InvalidArgument, HTTPException, TextChannel, Forbidden
+    InvalidArgument, HTTPException, TextChannel, Forbidden, Role, Message
 from discord.ext.commands import BadArgument
+from discord_slash import cog_ext, SlashContext, SlashCommandOptionType
+from discord_slash.utils import manage_commands
 
-from administrator import db
-from administrator.check import is_enabled
+from administrator import db, slash
+from administrator.check import is_enabled, guild_only, has_permissions
 from administrator.logger import logger
-from administrator.utils import event_is_enabled
+from administrator.utils import event_is_enabled, get_message_by_url
 
 extension_name = "rorec"
 logger = logger.getChild(extension_name)
-
-channel_id_re = re.compile(r"^<#([0-9]+)>$")
 
 
 class RoRec(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        slash.get_cog_commands(self)
 
     def description(self):
         return "Create role-reaction message to give role from a reaction add"
 
     @staticmethod
-    def get_message(session: db.Session, message_id: int, guild_id: int) -> db.RoRec:
-        m = session.query(db.RoRec).filter(db.RoRec.message == message_id and db.RoRec.guild == guild_id).first()
+    async def get_message(session: db.Session, ctx: SlashContext, url: str) -> db.RoRec:
+        m = session.query(db.RoRec).filter(db.RoRec.message == (await get_message_by_url(ctx, url)).id and
+                                           db.RoRec.guild == ctx.guild.id).first()
         if not m:
             raise BadArgument()
         else:
             return m
 
-    async def try_emoji(self, ctx: commands.Context, emoji: str):
+    async def try_emoji(self, msg: Message, emoji: str):
         try:
-            await ctx.message.add_reaction(emoji)
+            await msg.add_reaction(emoji)
         except (HTTPException, NotFound, InvalidArgument):
             raise BadArgument()
         else:
-            await (await ctx.channel.fetch_message(ctx.message.id)).remove_reaction(emoji, self.bot.user)
+            await (await msg.channel.fetch_message(msg.id)).remove_reaction(emoji, self.bot.user)
 
-    @commands.group("rorec", pass_context=True)
+    @cog_ext.cog_subcommand(base="rorec", name="new",
+                            description="Create a new role-reaction message on the mentioned channel",
+                            options=[
+                                manage_commands.create_option("title", "The title",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("channel", "The target channel",
+                                                              SlashCommandOptionType.CHANNEL, True),
+                                manage_commands.create_option("description", "The description",
+                                                              SlashCommandOptionType.STRING, False),
+                                manage_commands.create_option("one", "If only one role is packable",
+                                                              SlashCommandOptionType.BOOLEAN, False)
+                            ])
     @is_enabled()
-    @commands.guild_only()
-    @commands.has_permissions(manage_roles=True)
-    async def rorec(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.rorec_help)
-
-    @rorec.group("help", pass_context=True)
-    async def rorec_help(self, ctx: commands.Context):
-        embed = Embed(title="Role-Reaction help")
-        embed.add_field(name="new <title> <#channel> [description] [Only one (True/False)]",
-                        value="Create a new role-reaction message on the mentioned channel.\n"
-                              "You can specify a description and if you can pick only one role",
-                        inline=False)
-        embed.add_field(name="edit <message id> <title> [description}", value="Edit a role-reaction message title and "
-                                                                              "description",
-                        inline=False)
-        embed.add_field(name="set <message_id> <emoji> <@role1> [@role2] ...",
-                        value="Add/edit a emoji with linked roles", inline=False)
-        embed.add_field(name="remove <message_id> <emoji>", value="Remove a emoji of a role-reaction message",
-                        inline=False)
-        embed.add_field(name="reload <message_id>", value="Reload the message and the reactions", inline=False)
-        embed.add_field(name="delete <message_id>", value="Remove a role-reaction message", inline=False)
-        await ctx.send(embed=embed)
-
-    @rorec.group("new", pass_context=True)
-    async def rorec_new(self, ctx: commands.Context, title: str, channel: str, description: str = "",
+    @guild_only()
+    @has_permissions(manage_roles=True)
+    async def rorec_new(self, ctx: SlashContext, title: str, channel: GuildChannel, description: str = "",
                         one: bool = False):
-        channel = channel_id_re.findall(channel)
-        if len(channel) != 1:
+        if not isinstance(channel, TextChannel):
             raise BadArgument()
-        channel = ctx.guild.get_channel(int(channel[0]))
-        if not channel:
-            raise BadArgument()
-
-        if description in ["True", "False"]:
-            one = True if description == "True" else False
-            description = ""
 
         embed = Embed(title=title, description=description)
         embed.add_field(name="Roles", value="No role yet...")
@@ -88,12 +68,24 @@ class RoRec(commands.Cog):
         s.add(r)
         s.commit()
         s.close()
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
-    @rorec.group("edit", pass_context=True)
-    async def rorec_edit(self, ctx: commands.Context, message_id: int, title: str, description: str = None):
+    @cog_ext.cog_subcommand(base="rorec", name="edit",
+                            description="Edit a role-reaction message title and description",
+                            options=[
+                                manage_commands.create_option("url", "The message url",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("title", "The new title",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("description", "The new description",
+                                                              SlashCommandOptionType.STRING, False)
+                            ])
+    @is_enabled()
+    @guild_only()
+    @has_permissions(manage_roles=True)
+    async def rorec_edit(self, ctx: SlashContext, url: str, title: str, description: str = ""):
         s = db.Session()
-        m = self.get_message(s, message_id, ctx.guild.id)
+        m = await self.get_message(s, ctx, url)
         s.close()
 
         message = await ctx.guild.get_channel(m.channel).fetch_message(m.message)
@@ -101,31 +93,57 @@ class RoRec(commands.Cog):
         embed.title = title
         embed.description = description
         await message.edit(embed=embed)
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
-    @rorec.group("set", pass_context=True)
-    async def rorec_set(self, ctx: commands.Context, message_id: int, emoji: str):
+    @cog_ext.cog_subcommand(base="rorec", name="set",
+                            description="Add/edit a emoji with linked roles",
+                            options=[
+                                manage_commands.create_option("url", "The message url",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("emoji", "The emoji",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("role", "The role",
+                                                              SlashCommandOptionType.ROLE, True)
+                            ])
+    @is_enabled()
+    @guild_only()
+    @has_permissions(manage_roles=True)
+    async def rorec_set(self, ctx: SlashContext, url: str, emoji: str, role: Role):
+        await ctx.send(content="\U000023f3")
         s = db.Session()
-        m = self.get_message(s, message_id, ctx.guild.id)
+        m = await self.get_message(s, ctx, url)
 
-        if len(ctx.message.role_mentions) == 0:
-            raise BadArgument()
-
-        await self.try_emoji(ctx, emoji)
+        await ctx.delete()
+        msg = await ctx.channel.send("\U000023f3")
+        await self.try_emoji(msg, emoji)
 
         data = m.get_data()
-        data[emoji] = list(map(lambda x: x.id, ctx.message.role_mentions))
+        data[emoji] = list(map(lambda x: x.id, [role]))
         m.set_data(data)
         await self.rorec_update(m)
         s.commit()
         s.close()
-        await ctx.message.add_reaction("\U0001f44d")
+        await msg.edit(content="\U0001f44d")
 
-    @rorec.group("remove", pass_context=True)
-    async def rorec_remove(self, ctx: commands.Context, message_id: int, emoji: str):
+    @cog_ext.cog_subcommand(base="rorec", name="remove",
+                            description="Remove a emoji of a role-reaction message",
+                            options=[
+                                manage_commands.create_option("url", "The message url",
+                                                              SlashCommandOptionType.STRING, True),
+                                manage_commands.create_option("emoji", "The emoji",
+                                                              SlashCommandOptionType.STRING, True)
+                            ])
+    @is_enabled()
+    @guild_only()
+    @has_permissions(manage_roles=True)
+    async def rorec_remove(self, ctx: SlashContext, url: str, emoji: str):
+        await ctx.send(content="\U000023f3")
         s = db.Session()
-        m = self.get_message(s, message_id, ctx.guild.id)
-        await self.try_emoji(ctx, emoji)
+        m = await self.get_message(s, ctx, url)
+
+        await ctx.delete()
+        msg = await ctx.channel.send("\U000023f3")
+        await self.try_emoji(msg, emoji)
 
         data = m.get_data()
         if emoji not in data:
@@ -136,24 +154,37 @@ class RoRec(commands.Cog):
         await self.rorec_update(m)
         s.commit()
         s.close()
-        await ctx.message.add_reaction("\U0001f44d")
+        await msg.edit("\U0001f44d")
 
-    @rorec.group("reload", pass_context=True)
-    async def rorec_reload(self, ctx: commands.Context, message_id: int):
+    @cog_ext.cog_subcommand(base="rorec", name="reload",
+                            description="Reload the message and the reactions",
+                            options=[manage_commands.create_option("url", "The message url",
+                                                                   SlashCommandOptionType.STRING, True)])
+    @is_enabled()
+    @guild_only()
+    @has_permissions(manage_roles=True)
+    async def rorec_reload(self, ctx: SlashContext, url: str):
         s = db.Session()
-        m = self.get_message(s, message_id, ctx.guild.id)
+        m = await self.get_message(s, ctx, url)
 
         await self.rorec_update(m)
         s.close()
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
-    @rorec.group("delete", pass_context=True)
-    async def rorec_delete(self, ctx: commands.Context, message_id: int):
+    @cog_ext.cog_subcommand(base="rorec", name="delete",
+                            description="Remove a role-reaction message",
+                            options=[manage_commands.create_option("url", "The message link",
+                                                                   SlashCommandOptionType.STRING, True)])
+    @is_enabled()
+    @guild_only()
+    @has_permissions(manage_roles=True)
+    async def rorec_delete(self, ctx: SlashContext, url: str):
+        msg = await get_message_by_url(ctx, url)
         s = db.Session()
-        m = self.get_message(s, message_id, ctx.guild.id)
+        await self.get_message(s, ctx, url)
         s.close()
-        await (await self.bot.get_channel(m.channel).fetch_message(m.message)).delete()
-        await ctx.message.add_reaction("\U0001f44d")
+        await msg.delete()
+        await ctx.send(content="\U0001f44d")
 
     async def rorec_update(self, m: db.RoRec):
         channel = self.bot.get_channel(m.channel)
@@ -173,6 +204,8 @@ class RoRec(commands.Cog):
             value += ", ".join(map(lambda x: self.bot.get_guild(m.guild).get_role(x).mention, data[d]))
             value += "\n"
             await message.add_reaction(d)
+        if not value:
+            value = "No role yet..."
         embed.add_field(name=name, value=value)
         await message.edit(embed=embed)
 

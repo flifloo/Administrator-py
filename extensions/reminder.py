@@ -1,14 +1,15 @@
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from discord.ext import commands
 from discord import Embed
 from discord.ext.commands import BadArgument
 from discord.ext import tasks
+from discord_slash import SlashContext, cog_ext, SlashCommandOptionType
+from discord_slash.utils import manage_commands
 
 from administrator.check import is_enabled
 from administrator.logger import logger
-from administrator import db
+from administrator import db, slash
 from administrator.utils import time_pars, seconds_to_time_string
 
 extension_name = "reminders"
@@ -18,61 +19,52 @@ logger = logger.getChild(extension_name)
 class Reminders(commands.Cog, name="Reminder"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        slash.get_cog_commands(self)
 
     def description(self):
         return "Create and manage reminders"
 
-    @commands.group("reminder", pass_context=True)
+    @cog_ext.cog_subcommand(base="reminder", name="add", description="Add a reminder to your reminders list", options=[
+        manage_commands.create_option("message", "The message", SlashCommandOptionType.STRING, True),
+        manage_commands.create_option("time", "When, ?D?H?M?S", SlashCommandOptionType.STRING, True)
+    ])
     @is_enabled()
-    async def reminder(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.reminder_help)
-
-    @reminder.group("help", pass_context=True)
-    async def reminder_help(self, ctx: commands.Context):
-        embed = Embed(title="Reminder help")
-        embed.add_field(name="reminder add <message> <time>", value="Add a reminder to your reminders list\n"
-                                                                    "Time: ?D?H?M?S", inline=False)
-        embed.add_field(name="reminder list", value="Show your tasks list", inline=False)
-        embed.add_field(name="reminder remove [N°]", value="Show your tasks list with if no id given\n"
-                                                           "Remove the task withe the matching id", inline=False)
-        await ctx.send(embed=embed)
-
-    @reminder.group("add", pass_context=True)
-    async def reminder_add(self, ctx: commands.Context, message: str, time: str):
+    async def reminder_add(self, ctx: SlashContext, message: str, time: str):
         time = time_pars(time)
         now = datetime.now()
         s = db.Session()
-        s.add(db.Task(message, ctx.author.id, ctx.channel.id, now + time, ctx.message.created_at))
+        s.add(db.Task(message, ctx.author.id, ctx.channel.id, now + time, datetime.now()))
         s.commit()
         s.close()
 
-        await ctx.send(f"""Remind you in {seconds_to_time_string(time.total_seconds())} !""")
+        await ctx.send(content=f"""Remind you in {seconds_to_time_string(time.total_seconds())} !""")
 
-    @reminder.group("list", pass_context=True)
-    async def reminder_list(self, ctx: commands.Context):
+    @cog_ext.cog_subcommand(base="reminder", name="list", description="Show your tasks list")
+    @is_enabled()
+    async def reminder_list(self, ctx: SlashContext):
         embed = Embed(title="Tasks list")
         s = db.Session()
         for t in s.query(db.Task).filter(db.Task.user == ctx.author.id).all():
             embed.add_field(name=f"N°{t.id} | {t.date.strftime('%d/%m/%Y %H:%M')}", value=f"{t.message}", inline=False)
         s.close()
-        await ctx.send(embed=embed)
+        await ctx.send(embeds=[embed])
 
-    @reminder.group("remove", pass_context=True)
-    async def reminder_remove(self, ctx: commands.Context, n: int = None):
-        if n is None:
-            await ctx.invoke(self.reminder_list)
+    @cog_ext.cog_subcommand(base="reminder", name="remove", description="Remove the task withe the matching id",
+                            options=[
+                                manage_commands.create_option("id", "The reminder id",
+                                                              SlashCommandOptionType.INTEGER, True)])
+    @is_enabled()
+    async def reminder_remove(self, ctx: SlashContext, n: int):
+        s = db.Session()
+        t = s.query(db.Task).filter(db.Task.id == n).first()
+        if t and t.user == ctx.author.id:
+            s.delete(t)
+            s.commit()
+            s.close()
+            await ctx.send(content="\U0001f44d")
         else:
-            s = db.Session()
-            t = s.query(db.Task).filter(db.Task.id == n).first()
-            if t and t.user == ctx.author.id:
-                s.delete(t)
-                s.commit()
-                s.close()
-                await ctx.message.add_reaction("\U0001f44d")
-            else:
-                s.close()
-                raise BadArgument()
+            s.close()
+            raise BadArgument()
 
     @tasks.loop(minutes=1)
     async def reminders_loop(self):

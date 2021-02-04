@@ -1,12 +1,16 @@
+import shlex
 from datetime import datetime
 
 from discord.abc import GuildChannel
 from discord.ext import commands
 from discord import Embed, RawReactionActionEvent, RawMessageDeleteEvent, RawBulkMessageDeleteEvent, TextChannel, Guild
 from discord.ext.commands import BadArgument
+from discord_slash import cog_ext, SlashCommandOptionType, SlashContext
+from discord_slash.utils import manage_commands
 
 import db
-from administrator.check import is_enabled
+from administrator import slash
+from administrator.check import is_enabled, guild_only
 from administrator.logger import logger
 from administrator.utils import event_is_enabled
 
@@ -21,47 +25,41 @@ REACTIONS.append("\U0001F51F")
 class Poll(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        slash.get_cog_commands(self)
 
     def description(self):
         return "Create poll with a simple command"
 
-    @commands.group("poll", pass_context=True)
+    @cog_ext.cog_slash(name="poll",
+                       description="Create a poll",
+                       options=[
+                           manage_commands.create_option("name", "Poll name",
+                                                         SlashCommandOptionType.STRING, True),
+                           manage_commands.create_option("choices", "All pool choice",
+                                                         SlashCommandOptionType.STRING, True),
+                           manage_commands.create_option("multi", "Allow multiple choice",
+                                                         SlashCommandOptionType.BOOLEAN, False)
+                       ])
     @is_enabled()
-    @commands.guild_only()
-    async def poll(self, ctx: commands.Context, name: str, *choices):
-        if name == "help":
-            await ctx.invoke(self.poll_help)
+    @guild_only()
+    async def poll(self, ctx: SlashContext, name: str, choices: str, multi: bool = False):
+        choices = shlex.split(choices)
+        if len(choices) > 11:
+            raise BadArgument()
         else:
-            multi = False
-            if choices and choices[0] in ["multi", "m"]:
-                multi = True
-                choices = choices[1:]
-            if len(choices) == 0 or len(choices) > 11:
-                raise BadArgument()
-            else:
-                embed = Embed(title=f"Poll: {name}")
-                embed.set_author(name=str(ctx.author), icon_url=ctx.author.avatar_url)
-                embed.set_footer(text=f"Created: {ctx.message.created_at.strftime('%d/%m/%Y %H:%M')}")
-                for i, choice in enumerate(choices):
-                    embed.add_field(name=REACTIONS[i], value=choice, inline=False)
-                message = await ctx.send(embed=embed)
-                reactions = REACTIONS[0:len(choices)] + ["\U0001F5D1"]
-                for reaction in reactions:
-                    await message.add_reaction(reaction)
-                s = db.Session()
-                s.add(db.Polls(message.id, ctx.channel.id, ctx.guild.id, ctx.message.author.id, reactions, multi))
-                s.commit()
-                s.close()
-                await ctx.message.delete()
-
-    @poll.group("help", pass_context=True)
-    async def poll_help(self, ctx: commands.Context):
-        embed = Embed(title="Poll help")
-        embed.add_field(name="poll <name> [multi|m] <Choice N°1> <Choice N°2> ... <Choice N°11>",
-                        value="Create a poll, the argument multi (or m) after the name allow multiple response\n"
-                              "User the \U0001F5D1 to close the poll",
-                        inline=False)
-        await ctx.send(embed=embed)
+            embed = Embed(title=f"Poll: {name}")
+            embed.set_author(name=str(ctx.author), icon_url=ctx.author.avatar_url)
+            embed.set_footer(text=f"Created: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+            for i, choice in enumerate(choices):
+                embed.add_field(name=REACTIONS[i], value=choice, inline=False)
+            message = await ctx.channel.send(embed=embed)
+            reactions = REACTIONS[0:len(choices)] + ["\U0001F5D1"]
+            for reaction in reactions:
+                await message.add_reaction(reaction)
+            s = db.Session()
+            s.add(db.Polls(message.id, ctx.channel.id, ctx.guild.id, ctx.author.id, reactions, multi))
+            s.commit()
+            s.close()
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: RawReactionActionEvent):

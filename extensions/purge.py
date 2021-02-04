@@ -2,8 +2,10 @@ from asyncio import sleep
 
 from discord.ext import commands
 from discord import Embed, RawReactionActionEvent
+from discord_slash import SlashContext, cog_ext
 
-from administrator.check import is_enabled
+from administrator import slash
+from administrator.check import is_enabled, guild_only, has_permissions
 from administrator.logger import logger
 from administrator.utils import event_is_enabled
 
@@ -15,34 +17,23 @@ class Purge(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.purges = {}
+        slash.get_cog_commands(self)
 
     def description(self):
         return "Purge all messages between the command and the next add reaction"
 
-    @commands.group("purge", pass_context=True)
+    @cog_ext.cog_slash(name="purge", description="Purge all message delimited by the command to your next reaction")
     @is_enabled()
-    @commands.guild_only()
-    @commands.has_permissions(manage_messages=True)
-    async def purge(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            self.purges[ctx.message.author.id] = ctx.message
-            await ctx.message.add_reaction("\U0001f44d")
+    @guild_only()
+    @has_permissions(manage_messages=True)
+    async def purge(self, ctx: SlashContext):
+        message = await ctx.channel.send(content="\U0001f44d")
+        self.purges[ctx.author.id] = message
 
-            await sleep(2*60)
-            try:
-                if self.purges[ctx.message.author.id] == ctx.message:
-                    await ctx.message.clear_reactions()
-                    del self.purges[ctx.message.author.id]
-            except:
-                pass
-
-    @purge.group("help", pass_context=True)
-    @commands.guild_only()
-    async def purge_help(self, ctx: commands.Context):
-        embed = Embed(title="Purge help")
-        embed.add_field(name="purge", value="Purge all message delimited by the command to your next reaction",
-                        inline=False)
-        await ctx.send(embed=embed)
+        await sleep(2*60)
+        if ctx.author.id in self.purges and self.purges[ctx.author.id] == message:
+            await message.delete()
+            del self.purges[ctx.author.id]
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: RawReactionActionEvent):
@@ -55,8 +46,7 @@ class Purge(commands.Cog):
             if user.id in self.purges:
                 if message.channel == self.purges[user.id].channel:
                     async with message.channel.typing():
-                        await message.channel.purge(before=self.purges[user.id], after=message,
-                                                             limit=None)
+                        await message.channel.purge(before=self.purges[user.id], after=message, limit=None)
                         await self.purges[user.id].delete()
                         await message.delete()
                         del self.purges[user.id]
