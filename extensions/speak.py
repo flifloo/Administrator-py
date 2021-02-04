@@ -1,8 +1,11 @@
 from discord.ext import commands
 from discord import Member, VoiceState, Embed, Reaction, Guild
-from discord.ext.commands import CommandNotFound
+from discord.ext.commands import CommandNotFound, BadArgument
+from discord_slash import SlashContext, cog_ext, SlashCommandOptionType
+from discord_slash.utils import manage_commands
 
-from administrator.check import is_enabled
+from administrator import slash
+from administrator.check import is_enabled, guild_only, has_permissions
 from administrator.logger import logger
 from administrator.utils import event_is_enabled
 
@@ -21,29 +24,24 @@ class Speak(commands.Cog):
         self.last_reaction = None
         self.voice_message = None
         self.last_message = None
+        slash.get_cog_commands(self)
 
     def description(self):
         return "Speech manager"
 
-    @commands.group("speak", pass_context=True)
+    @cog_ext.cog_subcommand(base="speak", name="setup",
+                            description="Set your current voice channel as the speak channel",
+                            options=[
+                                manage_commands.create_option("strict", "Mute everyone on setup",
+                                                              SlashCommandOptionType.BOOLEAN, False)
+                            ])
     @is_enabled()
-    @commands.guild_only()
-    @commands.has_guild_permissions(mute_members=True)
-    async def speak(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            raise CommandNotFound
-
-    @speak.group("help", pass_context=True)
-    async def speak_help(self, ctx: commands.Context):
-        embed = Embed(title="Speak help")
-        embed.add_field(name="speak setup [strict]",
-                        value="Set your current voice channel as the speak channel", inline=False)
-        embed.add_field(name="speak mute", value="Mute everyone on the speak channel except you", inline=False)
-        embed.add_field(name="speak unmute", value="Unmute everyone on the speak channel except you", inline=False)
-        await ctx.send(embed=embed)
-
-    @speak.group("setup", pass_context=True)
-    async def speak_setup(self, ctx: commands.Context, *args):
+    @guild_only()
+    @has_permissions(mute_members=True)
+    async def speak_setup(self, ctx: SlashContext, strict: bool = False):
+        self.strict = strict
+        if not ctx.author.voice:
+            raise BadArgument()
         self.voice_chan = ctx.author.voice.channel.id
         embed = Embed(title="Speak \U0001f508")
         embed.add_field(name="Waiting list \u23f3", value="Nobody", inline=False)
@@ -57,24 +55,30 @@ class Speak(commands.Cog):
                               "\u274C Clear the speak\n"
                               "Remove your reaction to remove from list",
                         inline=False)
-        self.voice_message = await ctx.send(embed=embed)
+        self.voice_message = await ctx.channel.send(embed=embed)
         for reaction in ["\U0001f5e3", "\u2757", "\u27A1", "\U0001F512", "\U0001F507", "\U0001F50A", "\u274C"]:
             await self.voice_message.add_reaction(reaction)
         self.voice_message = await self.voice_message.channel.fetch_message(self.voice_message.id)
 
-    @speak.group("mute", pass_context=True)
-    async def speak_mute(self, ctx: commands.Context):
+    @cog_ext.cog_subcommand(base="speak", name="mute", description="Mute everyone on the speak channel except you")
+    @is_enabled()
+    @guild_only()
+    @has_permissions(mute_members=True)
+    async def speak_mute(self, ctx: SlashContext):
         if not await self.mute(True, ctx.author):
-            await ctx.message.add_reaction("\u274C")
+            await ctx.send(content="\u274C")
         else:
-            await ctx.message.add_reaction("\U0001f44d")
+            await ctx.send(content="\U0001f44d")
 
-    @speak.group("unmute", pass_context=True)
-    async def speak_unmute(self, ctx: commands.Context):
+    @cog_ext.cog_subcommand(base="speak", name="unmute", description="Unmute everyone on the speak channel except you")
+    @is_enabled()
+    @guild_only()
+    @has_permissions(mute_members=True)
+    async def speak_unmute(self, ctx: SlashContext):
         if not await self.mute(False, ctx.author):
-            await ctx.message.add_reaction("\u274C")
+            await ctx.send(content="\u274C")
         else:
-            await ctx.message.add_reaction("\U0001f44d")
+            await ctx.send(content="\U0001f44d")
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: Member, before: VoiceState, after: VoiceState):
@@ -91,7 +95,7 @@ class Speak(commands.Cog):
                 (after is not None and after.channel is not None and after.channel.id != self.voice_chan):
             await member.edit(mute=False)
 
-    async def cog_after_invoke(self, ctx: commands.Context):
+    async def cog_after_invoke(self, ctx: SlashContext):
         await ctx.message.delete(delay=30)
 
     @commands.Cog.listener()
