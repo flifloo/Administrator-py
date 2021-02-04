@@ -1,6 +1,6 @@
 from discord.ext import commands
 from discord import Member, VoiceState, Embed, Reaction, Guild
-from discord.ext.commands import CommandNotFound, BadArgument
+from discord.ext.commands import BadArgument
 from discord_slash import SlashContext, cog_ext, SlashCommandOptionType
 from discord_slash.utils import manage_commands
 
