@@ -5,9 +5,12 @@ from time import mktime
 from discord import Embed, Forbidden, HTTPException
 from discord.ext import commands, tasks
 from discord.ext.commands import BadArgument
+from discord_slash import SlashContext, cog_ext, SlashCommandOptionType
+from discord_slash.utils import manage_commands
 from feedparser import parse
 
 import db
+from administrator import slash
 from administrator.check import is_enabled
 from administrator.logger import logger
 
@@ -21,25 +24,14 @@ class Tomuss(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.tomuss_loop.start()
+        slash.get_cog_commands(self)
 
     def description(self):
         return "PCP Univ Lyon 1"
 
-    @commands.group("tomuss", pass_context=True)
-    @is_enabled()
-    async def tomuss(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await ctx.invoke(self.tomuss_help)
-
-    @tomuss.group("help", pass_context=True)
-    async def tomuss_help(self, ctx: commands.Context):
-        embed = Embed(title="Tomuss help")
-        embed.add_field(name="tomuss set <url>", value="Set your tomuss RSS feed", inline=False)
-        embed.add_field(name="tomuss unset", value="Unset your tomuss RSS feed", inline=False)
-        await ctx.send(embed=embed)
-
-    @tomuss.group("set", pass_context=True)
-    async def tomuss_set(self, ctx: commands.Context, url: str):
+    @cog_ext.cog_subcommand(base="tomuss", name="set", description="Set your tomuss RSS feed", options=[
+        manage_commands.create_option("url", "The RSS URL", SlashCommandOptionType.STRING, True)])
+    async def tomuss_set(self, ctx: SlashContext, url: str):
         if not url_re.fullmatch(url):
             raise BadArgument()
         entries = parse(url).entries
@@ -59,10 +51,10 @@ class Tomuss(commands.Cog):
         s.commit()
         s.close()
 
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.channel.send(f"Tomuss RSS set for {ctx.author.mention} \U0001f44d")
 
-    @tomuss.group("unset", pass_context=True)
-    async def tomuss_unset(self, ctx: commands.Context):
+    @cog_ext.cog_subcommand(base="tomuss", name="unset", description="Unset your tomuss RSS feed")
+    async def tomuss_unset(self, ctx: SlashContext):
         s = db.Session()
         t = s.query(db.Tomuss).get(ctx.author.id)
         if not t:
@@ -70,7 +62,7 @@ class Tomuss(commands.Cog):
         s.delete(t)
         s.commit()
         s.close()
-        await ctx.message.add_reaction("\U0001f44d")
+        await ctx.send(content="\U0001f44d")
 
     @tasks.loop(minutes=5)
     async def tomuss_loop(self):
