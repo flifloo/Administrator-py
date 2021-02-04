@@ -1,10 +1,8 @@
-from discord import Embed
 from discord.ext import commands
 from discord.ext.commands import CommandNotFound, MissingRequiredArgument, BadArgument, MissingPermissions, \
-    NoPrivateMessage, CommandError, NotOwner
+    NoPrivateMessage, NotOwner
 from discord_slash import SlashContext
 
-from administrator import config
 from administrator.check import ExtensionDisabled
 from administrator.logger import logger
 
@@ -20,23 +18,6 @@ class Help(commands.Cog):
     def description(self):
         return "Give help and command list"
 
-    @commands.command("help", pass_context=True)
-    async def help(self, ctx: commands.Context):
-        embed = Embed(title="Help")
-
-        for c in filter(lambda x: x != "Help", self.bot.cogs):
-            cog = self.bot.cogs[c]
-            try:
-                if await getattr(cog, c.lower()).can_run(ctx):
-                    embed.add_field(name=c,
-                                    value=cog.description() + "\n" +
-                                    f"`{config.get('prefix')}{c.lower()} help` for more information",
-                                    inline=False)
-            except CommandError:
-                pass
-
-        await ctx.send(embed=embed)
-
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error):
         await self.error_handler(ctx, error)
@@ -45,20 +26,27 @@ class Help(commands.Cog):
     async def on_slash_command_error(self, ctx: SlashContext, error: Exception):
         await self.error_handler(ctx, error)
 
-    @staticmethod
-    async def error_handler(ctx, error: Exception):
+    async def error_handler(self, ctx, error: Exception):
         if isinstance(error, CommandNotFound):
-            await ctx.send(content="\u2753")
+            await self.reaction(ctx, "\u2753")
         elif isinstance(error, MissingRequiredArgument) or isinstance(error, BadArgument):
-            await ctx.send(content="\u274C")
+            await self.reaction(ctx, "\u274C")
         elif isinstance(error, NotOwner) or isinstance(error, MissingPermissions) \
                 or isinstance(error, NoPrivateMessage):
-            await ctx.send(content="\U000026D4")
+            await self.reaction(ctx, "\U000026D4")
         elif isinstance(error, ExtensionDisabled):
-            await ctx.send(content="\U0001F6AB")
+            await self.reaction(ctx, "\U0001F6AB")
         else:
             await ctx.send(content="An error occurred !")
             raise error
+
+    @staticmethod
+    async def reaction(ctx, react: str):
+        m = getattr(ctx, "message", None)
+        if m:
+            await m.add_reaction(react)
+        else:
+            await ctx.send(content=react)
 
 
 def setup(bot):

@@ -21,20 +21,6 @@ class Greetings(commands.Cog):
     def description(self):
         return "Setup join and leave message"
 
-    @cog_ext.cog_subcommand(base="greetings", name="help",
-                            description="Help about greetings")
-    @is_enabled()
-    @guild_only()
-    @has_permissions(manage_guild=True)
-    async def greetings_help(self, ctx: SlashContext):
-        embed = Embed(title="Greetings help")
-        embed.add_field(name="set <join/leave> <message>", value="Set the greetings message\n"
-                                                                 "`{}` will be replace by the username",
-                        inline=False)
-        embed.add_field(name="show <join/leave>", value="Show the greetings message", inline=False)
-        embed.add_field(name="toggle <join/leave>", value="Enable or disable the greetings message", inline=False)
-        await ctx.send(embeds=[embed])
-
     @cog_ext.cog_subcommand(base="greetings", name="set",
                             description="Set the greetings message\n`{}` will be replace by the username",
                             options=[

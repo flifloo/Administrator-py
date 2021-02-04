@@ -30,23 +30,6 @@ class Invite(commands.Cog):
     def description(self):
         return "Get role from a special invite link"
 
-    @cog_ext.cog_subcommand(base="invite", name="help", description="Help about invite")
-    @is_enabled()
-    @guild_only()
-    @has_permissions(administrator=True)
-    async def invite_help(self, ctx: SlashContext):
-        embed = Embed(title="Invite help")
-        embed.add_field(name="invite create <#channel> <@role>", value="Create a invite link to a role", inline=False)
-        embed.add_field(name="invite delete <code>", value="Remove a invite", inline=False)
-        await ctx.send(embeds=[embed])
-
-    @cog_ext.cog_subcommand(base="invite", name="create", description="Create a invite link to a role",
-                            options=[
-                                manage_commands.create_option("channel", "The channel to join",
-                                                              SlashCommandOptionType.CHANNEL, True),
-                                manage_commands.create_option("role", "The role to give",
-                                                              SlashCommandOptionType.ROLE, True)
-                            ])
     @is_enabled()
     @guild_only()
     @has_permissions(administrator=True)
