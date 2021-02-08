@@ -1,4 +1,4 @@
-from bot_bde import bot
+from administrator import bot
 
 bot.load_extension("extensions.help")
 bot.load_extension("extensions.speak")
@@ -13,7 +13,6 @@ bot.load_extension("extensions.warn")
 bot.load_extension("extensions.pcp")
 bot.load_extension("extensions.tex")
 bot.load_extension("extensions.invite")
-bot.load_extension("extensions.speak")
 bot.load_extension("extensions.utils")
 bot.load_extension("extensions.tomuss")
 bot.load_extension("extensions.calendar")
