@@ -1,6 +1,6 @@
 import re
 
-from discord import Member, Role
+from discord import Member, Role, Embed
 from discord.ext import commands
 from discord.ext.commands import BadArgument
 from discord_slash import cog_ext, SlashCommandOptionType, SlashContext
@@ -77,6 +77,25 @@ class PCP(commands.Cog):
             msg = "unpinned a message"
 
         await ctx.send(content=f"{ctx.author.mention} {msg}")
+
+    @cog_ext.cog_subcommand(base="pcp", name="call", description="List all students present in vocal")
+    @guild_only()
+    @has_permissions(manage_messages=True)
+    async def pcp_call(self, ctx: SlashContext):
+        if not ctx.author.voice or not ctx.author.voice.channel.category:
+            raise BadArgument()
+        r = next(filter(lambda r: ctx.author.voice.channel.category.name.upper() == r.name.upper(), ctx.guild.roles),
+                 None)
+        if not r:
+            raise BadArgument()
+
+        p = list(map(lambda s: s.display_name, filter(lambda s: s in ctx.author.voice.channel.members, r.members)))
+        a = list(map(lambda s: s.display_name, filter(lambda s: s not in ctx.author.voice.channel.members, r.members)))
+
+        embed = Embed(title=f"Call for {r.name}", description=f"{len(p)}/{len(r.members)}")
+        embed.add_field(name="\u2705 Present", value="\n".join(p) if p else "Nobody...", inline=False)
+        embed.add_field(name="Absent", value="\n".join(a) if a else "Nobody...", inline=False)
+        await ctx.send(embeds=[embed])
 
     @cog_ext.cog_subcommand(base="pcp", subcommand_group="group", name="fix_vocal",
                             description="Check all text channel permissions to reapply vocal permissions")
